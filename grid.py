@@ -188,5 +188,13 @@ class Grid:
                 mat[r, c] = self._cells[r][c].grad[dim]
         return mat
 
+    def wake_matrix(self) -> np.ndarray:
+        """返回 wake 热力尾迹的二维数组。"""
+        mat = np.zeros((self.rows, self.cols), dtype=float)
+        for r in range(self.rows):
+            for c in range(self.cols):
+                mat[r, c] = self._cells[r][c].wake
+        return mat
+
     def __repr__(self) -> str:
         return f"Grid({self.rows}x{self.cols})"
