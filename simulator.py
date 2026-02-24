@@ -121,11 +121,16 @@ class Simulator:
         self._sync_return_field()                          # ← 先同步回程场
         self.injector.tick_diffuse(att_iters=1, cost_iters=1)  # ← 再扩散（用最新 sources）
 
-        # Phase 0: 在所有机器人当前位置打上 wake 标记（首次到达时设为 WAKE_INIT）
+        # Phase 0: 在所有机器人当前位置打上 wake 标记
+        #   cell.wake        — 供可视化热力图使用（全局共享，不影响评分）
+        #   robot._wake_trail — 私有尾迹，只影响本机器人自身的导航评分
         for robot in self.robots:
             cell = self.grid[robot.row, robot.col]
+            pos  = (robot.row, robot.col)
             if cell.wake == 0.0:
-                cell.wake = WAKE_INIT
+                cell.wake = WAKE_INIT                          # viz 热力图
+            if pos not in robot._wake_trail:                   # 首次到达才打锚
+                robot._wake_trail[pos] = WAKE_INIT             # 私有尾迹
 
         # Phase 1: 顺序预约（penalty + wake 参与评分）
         for robot in self.robots:
@@ -137,10 +142,22 @@ class Simulator:
         for robot in self.robots:
             robot.execute_move(self.grid)
 
-        # Phase 2.5: 全局 wake 衰减（只衰减 wake > 0 且不被 occ 的 Cell）
+        # Phase 2.5a: 全局 cell.wake 衰减（仅用于可视化热力图）
         for cell in self.grid.all_cells():
             if cell.wake > 0.0 and not cell.occ:
                 cell.wake = max(0.0, cell.wake - WAKE_DELTA)
+
+        # Phase 2.5b: 每个机器人的私有 wake trail 独立衰减
+        for robot in self.robots:
+            expired = []
+            for pos, w in robot._wake_trail.items():
+                new_w = w - WAKE_DELTA
+                if new_w <= 0.0:
+                    expired.append(pos)
+                else:
+                    robot._wake_trail[pos] = new_w
+            for pos in expired:
+                del robot._wake_trail[pos]
 
         # Phase 3: 到达检测
         any_active = False

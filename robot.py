@@ -41,6 +41,8 @@ class Robot:
         self.pod_origin  : tuple[int, int] | None = None
         self.wait_ticks  : int                    = 0
         self._next_pos   : tuple[int, int] | None = None
+        # 私有 wake 尾迹：(row, col) → wake 值，只影响本机器人自身的导航评分
+        self._wake_trail : dict[tuple[int, int], float] = {}
 
     @property
     def pos(self) -> tuple[int, int]:
@@ -76,11 +78,12 @@ class Robot:
         from simulator import W2
 
         def _score(c) -> float:
-            """grad + w2*wake — 方向感知复合评分"""
+            """grad ± w2*wake — 方向感知复合评分（只用本机器人自己的 wake 尾迹）"""
+            own_wake = self._wake_trail.get((c.row, c.col), 0.0)
             if self.ascending:
-                return c.grad[dim] - W2 * c.wake   # wake 减分（不吸引）
+                return c.grad[dim] - W2 * own_wake   # wake 减分（不吸引）
             else:
-                return c.grad[dim] + W2 * c.wake   # wake 加分（代价高）
+                return c.grad[dim] + W2 * own_wake   # wake 加分（代价高）
 
         current_cell = grid[self.row, self.col]
         # 基准分用纯梯度（不含 wake），避免自己格的 wake 影响方向判断
@@ -95,12 +98,14 @@ class Robot:
 
         if self.ascending:
             best = max(candidates, key=_score)
-            if _score(best) <= cur_base:
+            # 门槛比较：用 best 的纯梯度 vs 当前纯梯度（wake 只影响排序，不影响是否移动）
+            if best.grad[dim] <= cur_base:
                 self._next_pos = None
                 return
         else:
             best = min(candidates, key=_score)
-            if _score(best) >= cur_base:
+            # 门槛比较：用 best 的纯梯度 vs 当前纯梯度（wake 只影响排序，不影响是否移动）
+            if best.grad[dim] >= cur_base:
                 self._next_pos = None
                 return
 
