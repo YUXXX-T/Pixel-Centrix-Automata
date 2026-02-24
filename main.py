@@ -25,20 +25,22 @@ STATIONS = {
     4: (8, 9),
 }
 
-ROBOT_STARTS = [(9, 2), (9, 5), (9, 7)]
+ROBOT_STARTS = [(9, 1), (9, 3), (9, 5), (9, 7), (9, 9)]
 
 ORDERS = [
     (4, 2, 2),   # Pod@(4,2) → Station#2
     (4, 5, 1),   # Pod@(4,5) → Station#1
     (4, 8, 3),   # Pod@(4,8) → Station#3
+    (3, 1, 4),   # Pod@(3,1) → Station#4
+    (3, 7, 1),   # Pod@(3,7) → Station#1
 ]
 
 VISUALIZE     = True
 MAX_TICKS     = 500
 TICK_INTERVAL = 0.12
 
-ROBOT_COLORS = ["#00ff88", "#ff6644", "#44aaff"]
-POD_COLORS   = ["#88ddff", "#ffcc44", "#cc88ff"]
+ROBOT_COLORS = ["#00ff88", "#ff6644", "#44aaff", "#ffcc00", "#cc44ff"]
+POD_COLORS   = ["#88ddff", "#ffcc44", "#cc88ff", "#88ff88", "#ff88cc"]
 
 
 def build_sim() -> Simulator:
@@ -230,11 +232,18 @@ def run_visual() -> None:
                 dot.set_data([r.col], [gy(r.row)])
 
         for idx, (dot, orow, ocol) in enumerate(pod_dots):
-            r = sim.robots[idx]
-            if r.carrying_pod:
-                dot.set_data([r.col], [gy(r.row)])
+            # 找到正在搬运这个 Pod 的机器人（按 pod_origin 匹配）
+            carrier = None
+            for r in sim.robots:
+                if r.carrying_pod and r.pod_origin == (orow, ocol):
+                    carrier = r
+                    break
+            if carrier is not None:
+                dot.set_data([carrier.col], [gy(carrier.row)])
             else:
-                dot.set_data([ocol], [gy(orow)])
+                # Pod 静止：从 _pod_current_pos 读实际位置（可能已换格子）
+                cur = sim._pod_current_pos.get((orow, ocol), (orow, ocol))
+                dot.set_data([cur[1]], [gy(cur[0])])
 
         parts = []
         for r in sim.robots:

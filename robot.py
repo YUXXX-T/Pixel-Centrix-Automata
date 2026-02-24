@@ -82,7 +82,8 @@ class Robot:
                 return c.grad[dim] + W2 * c.wake   # wake 加分（代价高）
 
         current_cell = grid[self.row, self.col]
-        cur_score = _score(current_cell)
+        # 基准分用纯梯度（不含 wake），避免自己格的 wake 影响方向判断
+        cur_base = current_cell.grad[dim]
 
         candidates = [c for c in grid.neighbors(self.row, self.col)
                       if c.is_available]
@@ -93,12 +94,12 @@ class Robot:
 
         if self.ascending:
             best = max(candidates, key=_score)
-            if _score(best) <= cur_score:
+            if _score(best) <= cur_base:
                 self._next_pos = None
                 return
         else:
             best = min(candidates, key=_score)
-            if _score(best) >= cur_score:
+            if _score(best) >= cur_base:
                 self._next_pos = None
                 return
 

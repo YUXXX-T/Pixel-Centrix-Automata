@@ -21,8 +21,8 @@ WAIT_TICKS: int = 5
 
 # 防碰撞惩罚值
 PENALTY_R0: float = 200.0    # 导航机器人自己的 Cell（来自其他机器人）
-PENALTY_R1: float = 120.0    # 第 1 圈
-PENALTY_R2: float = 60.0     # 第 2 圈
+PENALTY_R1: float = 40.0     # 第 1 圈
+PENALTY_R2: float = 0     # 第 2 圈
 
 # Wake trail（空间热力尾迹）
 WAKE_INIT: float     = 100.0   # 机器人第一次到达 Cell 时的 wake 值
@@ -52,10 +52,17 @@ class Simulator:
         self.injector = GradientInjector(self.grid)
         self.robots   : list[Robot]          = []
         self._stations: dict[int, Station]   = {}
-        self._pending_orders: list[Order]    = []
-        self._robot_orders: dict[int, Order] = {}   # robot_id → Order
+        self._pod_orders: dict[tuple[int,int], Order] = {}  # (pr,pc) → Order
+        self._robot_orders: dict[int, Order] = {}           # robot_id → Order
         self.tick_count: int                 = 0
         self._penalty_snapshot: dict[tuple[int, int, int], float] = {}
+        self._pods_injected: bool = False
+        # 所有 Pod 原始格子（用于回程任意放置）
+        self._all_pod_positions: set[tuple[int,int]] = set()
+        # 当前已被 Pod 占用的格子（未被拾起 or 已放回）
+        self._occupied_pod_slots: set[tuple[int,int]] = set()
+        # 每个 Pod 当前实际位置：original_pos → current_pos（pod 随机器人移动时靠 viz 动态查）
+        self._pod_current_pos: dict[tuple[int,int], tuple[int,int]] = {}
 
     def add_robot(self, robot: Robot) -> None:
         self.robots.append(robot)
@@ -66,27 +73,37 @@ class Simulator:
         self.injector.setup_station(tar_id, row, col)
 
     def add_order(self, order: Order) -> None:
-        self._pending_orders.append(order)
+        pos = (order.pod_row, order.pod_col)
+        self._pod_orders[pos] = order
+        self._all_pod_positions.add(pos)
+        self._occupied_pod_slots.add(pos)
+        self._pod_current_pos[pos] = pos  # 初始位置 = 原始位置
 
     # ------------------------------------------------------------------
-    def _dispatch_orders(self) -> None:
-        for robot in self.robots:
-            if robot.task_type != TaskType.IDLE:
-                continue
-            if not self._pending_orders:
-                break
-            order = self._pending_orders.pop(0)
-            self._robot_orders[robot.robot_id] = order
-            self.injector.inject_order(order.pod_row, order.pod_col)
-            robot.assign_fetch(order.tar_id)
+    def _inject_all_pods(self) -> None:
+        """一次性注入所有 Pod 峰值到 dim=0。"""
+        if self._pods_injected:
+            return
+        for (pr, pc), order in self._pod_orders.items():
+            self.injector.inject_order(pr, pc)
             st = self._stations.get(order.tar_id)
-            print(f"[Sim]  Robot#{robot.robot_id} ← pod@({order.pod_row},{order.pod_col}) "
-                  f"→ station#{order.tar_id}"
+            print(f"[Sim]  Pod@({pr},{pc}) → station#{order.tar_id}"
                   + (f"@({st.row},{st.col})" if st else ""))
+        self._pods_injected = True
+
+    def _dispatch_orders(self) -> None:
+        """让所有 IDLE 机器人自动进入 FETCH_POD（由梯度自由选择 Pod）。"""
+        if not self._pod_orders:
+            return
+        for robot in self.robots:
+            if robot.task_type == TaskType.IDLE:
+                robot.task_type = TaskType.FETCH_POD
+                # tar_id 暂不指定，等拾起 Pod 时再赋值
 
     # ------------------------------------------------------------------
     def tick(self) -> bool:
         self.tick_count += 1
+        self._inject_all_pods()
         self._dispatch_orders()
         self.injector.tick_diffuse(att_iters=1, cost_iters=1)
 
@@ -114,8 +131,7 @@ class Simulator:
         # Phase 3: 到达检测
         any_active = False
         for robot in self.robots:
-            t     = robot.task_type
-            order = self._robot_orders.get(robot.robot_id)
+            t = robot.task_type
 
             if t == TaskType.WAIT_AT_STATION:
                 any_active = True
@@ -123,9 +139,14 @@ class Simulator:
                 if robot.wait_ticks <= 0:
                     assert robot.pod_origin is not None
                     pr, pc = robot.pod_origin
-                    self.injector.inject_return_field(pr, pc)
                     robot.task_type = TaskType.RETURN_POD
-                    print(f"[Sim]  Robot#{robot.robot_id} → returning to ({pr},{pc})  "
+                    # 把所有当前空闲的 pod 槽都注入 Grad[5]
+                    # （不只是自己的 pod_origin，其他机器人还在途中的空格也要包括）
+                    free_slots = self._all_pod_positions - self._occupied_pod_slots
+                    for fpr, fpc in free_slots:
+                        if (fpr, fpc) not in self.injector._return_sources:
+                            self.injector.inject_return_field(fpr, fpc)
+                    print(f"[Sim]  Robot#{robot.robot_id} → return (targets: {len(free_slots)} free slots)  "
                           f"tick={self.tick_count}")
                 continue
 
@@ -134,19 +155,29 @@ class Simulator:
 
             any_active = True
 
-            if t == TaskType.FETCH_POD and order is not None:
-                if robot.row == order.pod_row and robot.col == order.pod_col:
+            if t == TaskType.FETCH_POD:
+                # 自由选择：检查机器人当前位置是否有未被拾起的 Pod
+                pos = (robot.row, robot.col)
+                order = self._pod_orders.get(pos)
+                if order is not None and not order.fulfilled:
                     robot.carrying_pod = True
-                    robot.pod_origin   = (order.pod_row, order.pod_col)
+                    robot.pod_origin   = pos
+                    robot.tar_id       = order.tar_id
                     robot.task_type    = TaskType.DELIVER
-                    self.injector.clear_pod_peak(order.pod_row, order.pod_col)
-                    print(f"[Sim]  Robot#{robot.robot_id} lifted pod  tick={self.tick_count}")
+                    self._robot_orders[robot.robot_id] = order
+                    self.injector.clear_pod_peak(pos[0], pos[1])
+                    self._pod_orders.pop(pos)
+                    self._occupied_pod_slots.discard(pos)   # 格子空出，回程可用
+                    # pod 随机器人移动，current_pos 保持 origin（viz 靠 carrying_pod 动态显示）
+                    print(f"[Sim]  Robot#{robot.robot_id} lifted pod@{pos} "
+                          f"→ station#{order.tar_id}  tick={self.tick_count}")
 
             elif t == TaskType.DELIVER:
                 st = self._stations.get(robot.tar_id)
                 if st and robot.row == st.row and robot.col == st.col:
                     robot.task_type  = TaskType.WAIT_AT_STATION
                     robot.wait_ticks = WAIT_TICKS
+                    order = self._robot_orders.get(robot.robot_id)
                     if order is not None:
                         order.fulfilled = True
                     print(f"[Sim]  Robot#{robot.robot_id} delivered → wait {WAIT_TICKS}  "
@@ -154,14 +185,39 @@ class Simulator:
 
             elif t == TaskType.RETURN_POD:
                 assert robot.pod_origin is not None
-                pr, pc = robot.pod_origin
-                if robot.row == pr and robot.col == pc:
+                orig_pr, orig_pc = robot.pod_origin
+                pos = (robot.row, robot.col)
+                # 抵达任意空闲的 Pod 原始格子即可放下（不必是自己的 pod_origin）
+                if pos in self._all_pod_positions and pos not in self._occupied_pod_slots:
                     robot.carrying_pod = False
+                    pod_orig = robot.pod_origin       # 保存 origin，用于更新 current_pos
                     robot.pod_origin   = None
                     robot.task_type    = TaskType.IDLE
-                    self.injector.clear_return_target(pr, pc)
+                    self._occupied_pod_slots.add(pos)
+                    if pod_orig is not None:
+                        self._pod_current_pos[pod_orig] = pos   # 记录 pod 放在了新位置
+                    # 清除自己的回程目标
+                    self.injector.clear_return_target(orig_pr, orig_pc)
+                    # 若落点 pos 不同于自己的 pod_origin，且 pos 是某个其他机器人的回程目标
+                    # → 把该目标从 return_sources 中移除，并将那个机器人的 pod_origin 改为
+                    #   另一个空闲格，避免它继续导航到已被占的 pos
+                    if pos != (orig_pr, orig_pc) and pos in self.injector._return_sources:
+                        # 找空闲 Pod 格（不在已占列表里）重新作为回程目标
+                        free_slots = self._all_pod_positions - self._occupied_pod_slots
+                        # 将正在回程且 pod_origin == pos 的机器人重定向
+                        for other in self.robots:
+                            if (other.task_type == TaskType.RETURN_POD
+                                    and other.pod_origin == pos):
+                                new_target = next(iter(free_slots), None)
+                                if new_target:
+                                    other.pod_origin = new_target
+                                    # new_target 已在 return_sources（当初 inject 过）或需新注入
+                                    if new_target not in self.injector._return_sources:
+                                        self.injector.inject_return_field(new_target[0], new_target[1])
+                        # 最后清除 pos 作为回程目标（重建在上面的 inject 或下面隐含完成）
+                        self.injector.clear_return_target(pos[0], pos[1])
                     self._robot_orders.pop(robot.robot_id, None)
-                    print(f"[Sim]  Robot#{robot.robot_id} returned pod → IDLE  "
+                    print(f"[Sim]  Robot#{robot.robot_id} returned pod @{pos} → IDLE  "
                           f"tick={self.tick_count}")
 
         parts = " | ".join(
@@ -170,7 +226,7 @@ class Simulator:
         )
         print(f"  Tick {self.tick_count:>3} | {parts}")
 
-        return bool(self._pending_orders) or bool(self._robot_orders) or any_active
+        return bool(self._pod_orders) or bool(self._robot_orders) or any_active
 
     # ------------------------------------------------------------------
     # 防碰撞：方向感知惩罚
@@ -216,10 +272,12 @@ class Simulator:
             # (c) 在导航机器人自己的 Cell 上注入惩罚（来自该其他机器人）
             _inject(nav_cell, PENALTY_R0)
 
-            # (b) Ring 1 和 Ring 2（跳过 ring 0 = 其他机器人自己的 Cell）
-            for dist, penalty in [(1, PENALTY_R1), (2, PENALTY_R2)]:
-                for cell in self.grid.cells_at_distance(robot.row, robot.col, dist):
-                    _inject(cell, penalty)
+            # (b) Ring 1 和 Ring 2 —— 仅活跃导航中的机器人才有扩展圈
+            #     IDLE 机器人只有 ring 0（靠 occ 挡住自己格子即可）
+            if robot.nav_dim >= 0:
+                for dist, penalty in [(1, PENALTY_R1), (2, PENALTY_R2)]:
+                    for cell in self.grid.cells_at_distance(robot.row, robot.col, dist):
+                        _inject(cell, penalty)
 
     def _remove_others_penalties(self) -> None:
         for (dim, r, c), orig in self._penalty_snapshot.items():
@@ -257,10 +315,11 @@ class Simulator:
                         continue
                     _viz_inject(self.grid[other.row, other.col], dim, ascending, PENALTY_R0)
 
-                # Ring 1, Ring 2（跳过 src 自己的 Cell）
-                for dist, penalty in [(1, PENALTY_R1), (2, PENALTY_R2)]:
-                    for cell in self.grid.cells_at_distance(src.row, src.col, dist):
-                        _viz_inject(cell, dim, ascending, penalty)
+                # Ring 1, Ring 2 —— 仅活跃导航中的 src 才有
+                if src.nav_dim >= 0:
+                    for dist, penalty in [(1, PENALTY_R1), (2, PENALTY_R2)]:
+                        for cell in self.grid.cells_at_distance(src.row, src.col, dist):
+                            _viz_inject(cell, dim, ascending, penalty)
 
     def remove_viz_penalties(self) -> None:
         """还原 apply_viz_penalties 的效果。"""
