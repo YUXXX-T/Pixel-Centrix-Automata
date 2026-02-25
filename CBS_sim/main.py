@@ -26,6 +26,18 @@ import os
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+# ===========================================================================
+# ★ 调试开关：改这一行即可切换配置
+#   SCENARIO = 10  →  10 robots / 10 pods（CBS 调试用）
+#   SCENARIO = 20  →  20 robots / 20 pods（参考 ../main.py N_AGENTS=20）
+#   SCENARIO = 42  →  42 robots / 42 pods（参考 ../main.py N_AGENTS=42）
+# ===========================================================================
+SCENARIO: int = 10
+
+import world as _world
+_world.ACTIVE_CONFIG = str(SCENARIO)
+_world._reinit()                          # 刷新 STATIONS / ROBOT_STARTS / POD_TASKS
+
 from world import (
     ROWS, COLS, STATIONS, OBSTACLES,
     build_agents_and_tasks, ROBOT_STARTS, POD_TASKS,
@@ -60,9 +72,10 @@ TICK_INTERVAL  = 0.12   # 与 ../main.py 一致，每 tick 一帧（无插值）
 # 主逻辑
 # ---------------------------------------------------------------------------
 def main() -> None:
+    n = len(ROBOT_STARTS)
     print("=" * 60)
-    print("  CBS Warehouse Simulation")
-    print("  10×10 grid | 4 stations | 10 robots | 10 pods")
+    print(f"  CBS Warehouse Simulation  [SCENARIO={SCENARIO}]")
+    print(f"  10×10 grid | 4 stations | {n} robots | {n} pods")
     print("=" * 60)
 
     agents, tasks = build_agents_and_tasks()

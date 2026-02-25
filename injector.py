@@ -101,9 +101,14 @@ class GradientInjector:
                   f"{len(self._return_sources)} remaining.")
 
     def _rebuild_return_field(self) -> None:
-        """从零重建 dim=5：对每个活跃返程目标建造代价场，取逐格最小值。"""
+        """从零重建 dim=5：对每个活跃返程目标建造代价场，取逐格最小值。
+        自动将当前 occ=True 的格子视为障碍，使梯度场绕过已停放的 FINI 机器人。"""
         from grid import COST_INF
         g = self.grid
+        # 当前格子中 occ=True 的作为 blocked（不参与扩散，保持 COST_INF）
+        occ_blocked: set[tuple[int, int]] = {
+            (c.row, c.col) for c in g.all_cells() if c.occ
+        }
         # 先清空
         g.clear_dim(RETURN_DIM)
         if not self._return_sources:
@@ -114,7 +119,8 @@ class GradientInjector:
         g.init_cost_dim(RETURN_DIM, (sr0, sc0), source_value=0.0)
         g.diffuse_cost(RETURN_DIM, delta_decay=RETURN_DELTA_DECAY,
                        iterations=INIT_RETURN_ITERS,
-                       source=(sr0, sc0), source_value=0.0)
+                       source=(sr0, sc0), source_value=0.0,
+                       blocked_cells=occ_blocked)
         # 对后续目标：用临时数组计算代价场，与现有场取 min
         if len(sources) > 1:
             import numpy as np
@@ -128,7 +134,8 @@ class GradientInjector:
                 g.init_cost_dim(RETURN_DIM, (sr, sc), source_value=0.0)
                 g.diffuse_cost(RETURN_DIM, delta_decay=RETURN_DELTA_DECAY,
                                iterations=INIT_RETURN_ITERS,
-                               source=(sr, sc), source_value=0.0)
+                               source=(sr, sc), source_value=0.0,
+                               blocked_cells=occ_blocked)
                 # 取 min
                 for r in range(g.rows):
                     for c in range(g.cols):
@@ -163,8 +170,18 @@ class GradientInjector:
                                    source=(sr, sc), source_value=0.0,
                                    blocked_cells=pod_blocked)
 
-        # 返程代价场（不受 Pod 影响，保持原逻辑）
+        # 返程代价场：感知 occ 状态，使梯度绕过 FINI 机器人等永久障碍
+        occ_blocked: set[tuple[int, int]] = {
+            (c.row, c.col) for c in self.grid.all_cells() if c.occ
+        }
+        # 每 tick 重钉 occ 格到 COST_INF（防止 min() 扩散把它们拉低）
+        for (br, bc) in occ_blocked:
+            self.grid[br, bc].grad[RETURN_DIM] = COST_INF
+        # 重钉 return sources 到 0（确保目标格不被上面覆盖）
+        for (sr, sc) in self._return_sources:
+            self.grid[sr, sc].grad[RETURN_DIM] = 0.0
         for (sr, sc) in self._return_sources:
             self.grid.diffuse_cost(RETURN_DIM, delta_decay=RETURN_DELTA_DECAY,
                                    iterations=cost_iters,
-                                   source=(sr, sc), source_value=0.0)
+                                   source=(sr, sc), source_value=0.0,
+                                   blocked_cells=occ_blocked)
