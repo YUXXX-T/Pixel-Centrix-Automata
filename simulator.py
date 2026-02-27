@@ -20,7 +20,7 @@ from injector import GradientInjector
 WAIT_TICKS: int = 5
 
 # 防碰撞惩值
-PENALTY_R0: float = 80.0     # 导航机器人自己的 Cell（一次性，不按其他机器人数量叠加）
+PENALTY_R0: float = 100.0     # 导航机器人自己的 Cell（一次性，不按其他机器人数量叠加）
 PENALTY_R1: float = 40.0     # 第 1 圈
 PENALTY_R2: float = 0     # 第 2 圈
 

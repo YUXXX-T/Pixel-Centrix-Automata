@@ -63,7 +63,7 @@ POD_COLORS = [
 # 规划器选项（四段路径含WAIT+RETURN，CBS搜索空间较大，默认用PP；
 #  如需CBS可改为 True，但可能需要更多节点预算）
 USE_CBS_FIRST  = True
-CBS_MAX_NODES  = 50000
+CBS_MAX_NODES  = 200000
 MAX_TICKS      = 500
 TICK_INTERVAL  = 0.12   # 与 ../main.py 一致，每 tick 一帧（无插值）
 
@@ -118,6 +118,15 @@ def main() -> None:
                 f"\n      4. 改用 ECBS（Enhanced CBS，允许次优解以换取速度）"
             )
             print("  Falling back to Prioritized Planning...")
+            # CBS 的 _replan() 在搜索过程中会反复修改 agent 的
+            # path / fetch_end_t / deliver_end_t 等属性。失败后这些
+            # 残留数据必须清除，否则 PP 的 pod 约束计算会误判。
+            for a in agents:
+                a.path = []
+                a.fetch_end_t = 0
+                a.deliver_end_t = 0
+                a.wait_end_t = 0
+                a.return_end_t = 0
 
 
     if solution is None:
@@ -398,6 +407,7 @@ def run_visual(agents: list[Agent], planner_name: str = "") -> None:
         # WAIT       : Pod 在工作站（静止显示）
         # RETURN     : Pod 跟随机器人回归
         # DONE       : Pod 回到原始位置（静止显示）
+        pod_positions: dict[int, Pos] = {}   # aid → (row, col)
         for mk, aid in pod_dots:
             a = agents[aid]
             ph = a.phase_at(t)
@@ -406,23 +416,39 @@ def run_visual(agents: list[Agent], planner_name: str = "") -> None:
                 if a.task:
                     pr, pc = a.task.pod_pos
                     mk.set_data([pc], [gy(pr)])
+                    pod_positions[aid] = (pr, pc)
                 mk.set_visible(True)
             elif ph in ("DELIVER", "WAIT"):
                 # Pod 跟随机器人
                 r, c = pos_at(a, t)
                 mk.set_data([c], [gy(r)])
                 mk.set_visible(True)
+                pod_positions[aid] = (r, c)
             elif ph == "RETURN":
                 # Pod 跟随机器人返回
                 r, c = pos_at(a, t)
                 mk.set_data([c], [gy(r)])
                 mk.set_visible(True)
+                pod_positions[aid] = (r, c)
             else:  # DONE
                 # Pod 回到原新位置（静止显示）
                 if a.task:
                     pr, pc = a.task.pod_pos
                     mk.set_data([pc], [gy(pr)])
+                    pod_positions[aid] = (pr, pc)
                 mk.set_visible(True)
+
+        # ── Pod 碰撞检测 ─────────────────────────────────
+        # 按格子分组，同一格子内有多个 Pod 即碰撞
+        from collections import defaultdict
+        cell_to_pods: dict[Pos, list[int]] = defaultdict(list)
+        for aid, pos in pod_positions.items():
+            cell_to_pods[pos].append(aid)
+        for pos, aids in cell_to_pods.items():
+            if len(aids) > 1:
+                ids_str = ", ".join(f"P{a}" for a in sorted(aids))
+                print(f"[COLLISION] Tick {t:>3} | Pods {ids_str} "
+                      f"collide at ({pos[0]}, {pos[1]})")
 
         # ── 路径密度面板：高亮当前位置 ───────────────────
         occ_scat.set_offsets(curr_pts if curr_pts else np.empty((0, 2)))

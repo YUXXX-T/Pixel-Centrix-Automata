@@ -146,6 +146,7 @@ def plan_full_path(
     cols: int,
     obstacles: set[Pos],
     constraints: list[Constraint],
+    pod_constraints: list[Constraint] | None = None,
     max_t: int = MAX_T,
 ) -> tuple[list[Pos], int, int, int, int] | None:
     """
@@ -157,8 +158,16 @@ def plan_full_path(
     - path[fetch_end_t..deliver_end_t]: pod_pos → station_pos
     - path[deliver_end_t..wait_end_t] : 在 station_pos 等待 WAIT_TICKS 步
     - path[wait_end_t..return_end_t]  : station_pos → pod_pos（放回）
+
+    pod_constraints: 仅在携带 Pod 阶段（段 2/3/4）生效的额外约束,
+                     用于避免 Pod-Pod 碰撞。
     """
-    # --- 段 1：start → pod_pos ---
+    # 携带 Pod 阶段的约束 = 普通约束 + Pod 碰撞约束
+    carry_constraints = constraints
+    if pod_constraints:
+        carry_constraints = constraints + pod_constraints
+
+    # --- 段 1：start → pod_pos（未携带 Pod，仅用普通约束） ---
     seg1 = space_time_astar(
         start=start, goal=pod_pos,
         rows=rows, cols=cols, obstacles=obstacles,
@@ -168,25 +177,26 @@ def plan_full_path(
         return None
     fetch_end_t = len(seg1) - 1
 
-    # --- 段 2：pod_pos → station_pos ---
+    # --- 段 2：pod_pos → station_pos（携带 Pod，加入 pod 约束） ---
     seg2 = space_time_astar(
         start=pod_pos, goal=station_pos,
         rows=rows, cols=cols, obstacles=obstacles,
-        constraints=constraints, start_t=fetch_end_t, max_t=max_t,
+        constraints=carry_constraints, start_t=fetch_end_t, max_t=max_t,
     )
     if seg2 is None:
         return None
     deliver_end_t = fetch_end_t + len(seg2) - 1
 
-    # --- 段 3：在 station_pos 等待 WAIT_TICKS 步 ---
+    # --- 段 3：在 station_pos 等待 WAIT_TICKS 步（携带 Pod） ---
+    # 检查等待期间是否有 Pod 碰撞约束冲突
     wait_end_t = deliver_end_t + WAIT_TICKS
     wait_segment = [station_pos] * WAIT_TICKS  # 不包括 deliver_end_t 本身
 
-    # --- 段 4：station_pos → pod_pos（回返放回）---
+    # --- 段 4：station_pos → pod_pos（携带 Pod 回返，加入 pod 约束） ---
     seg4 = space_time_astar(
         start=station_pos, goal=pod_pos,
         rows=rows, cols=cols, obstacles=obstacles,
-        constraints=constraints, start_t=wait_end_t, max_t=max_t,
+        constraints=carry_constraints, start_t=wait_end_t, max_t=max_t,
     )
     if seg4 is None:
         return None
