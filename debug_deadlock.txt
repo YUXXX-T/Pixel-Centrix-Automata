@@ -1,0 +1,59 @@
+TIMEOUT after 500 ticks
+  R0 @(0,4) DELIVER carry=True pod_origin=(2, 2) tar=1
+  R1 @(4,2) FINISH carry=False pod_origin=None tar=2
+  R2 @(6,2) FINISH carry=False pod_origin=None tar=3
+  R3 @(5,2) FINISH carry=False pod_origin=None tar=3
+  R4 @(8,8) DELIVER carry=True pod_origin=(6, 2) tar=1
+  R5 @(6,8) DELIVER carry=True pod_origin=(4, 4) tar=4
+  R6 @(6,4) FINISH carry=False pod_origin=None tar=4
+  R7 @(2,4) DELIVER carry=True pod_origin=(5, 4) tar=1
+  R8 @(2,2) FINISH carry=False pod_origin=None tar=2
+  R9 @(0,7) DELIVER carry=True pod_origin=(6, 4) tar=2
+  Remaining pod_orders: []
+  Active robot_orders keys: [0, 9, 7, 4, 5]
+  Occupied pod slots: {(6, 2), (6, 4), (4, 2), (2, 2), (5, 2)}
+  Free return slots: {(4, 4), (2, 4), (3, 4), (5, 4), (3, 2)}
+
+  R0 nav_dim=1 asc=False task=DELIVER
+    avail_neighbors=[(1, 4), (0, 3), (0, 5)]
+    non_pod_avail=[(1, 4), (0, 3), (0, 5)]
+    self: grad[1]=60.0
+    (1,4) occ=False res=None pod=False grad[1]=50.0
+    (0,3) occ=False res=None pod=False grad[1]=70.0
+    (0,5) occ=False res=None pod=False grad[1]=50.0
+
+  R4 nav_dim=1 asc=False task=DELIVER
+    avail_neighbors=[(7, 8), (9, 8), (8, 7), (8, 9)]
+    non_pod_avail=[(7, 8), (9, 8), (8, 7), (8, 9)]
+    self: grad[1]=80.0
+    (7,8) occ=False res=None pod=False grad[1]=70.0
+    (9,8) occ=False res=None pod=False grad[1]=90.0
+    (8,7) occ=False res=None pod=False grad[1]=90.0
+    (8,9) occ=False res=None pod=False grad[1]=70.0
+
+  R5 nav_dim=4 asc=False task=DELIVER
+    avail_neighbors=[(5, 8), (7, 8), (6, 7), (6, 9)]
+    non_pod_avail=[(5, 8), (7, 8), (6, 7), (6, 9)]
+    self: grad[4]=30.0
+    (5,8) occ=False res=None pod=False grad[4]=40.0
+    (7,8) occ=False res=None pod=False grad[4]=20.0
+    (6,7) occ=False res=None pod=False grad[4]=40.0
+    (6,9) occ=False res=None pod=False grad[4]=20.0
+
+  R7 nav_dim=1 asc=False task=DELIVER
+    avail_neighbors=[(1, 4), (3, 4), (2, 3), (2, 5)]
+    non_pod_avail=[(1, 4), (3, 4), (2, 3), (2, 5)]
+    self: grad[1]=60.0
+    (1,4) occ=False res=None pod=False grad[1]=50.0
+    (3,4) occ=False res=None pod=False grad[1]=70.0
+    (2,3) occ=False res=None pod=False grad[1]=70.0
+    (2,5) occ=False res=None pod=False grad[1]=50.0
+
+  R9 nav_dim=2 asc=False task=DELIVER
+    avail_neighbors=[(1, 7), (0, 6), (0, 8)]
+    non_pod_avail=[(1, 7), (0, 6), (0, 8)]
+    self: grad[2]=80.0
+    (1,7) occ=False res=None pod=False grad[2]=70.0
+    (0,6) occ=False res=None pod=False grad[2]=70.0
+    (0,8) occ=False res=None pod=False grad[2]=90.0
+

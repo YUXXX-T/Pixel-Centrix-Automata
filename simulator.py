@@ -19,8 +19,8 @@ from injector import GradientInjector
 
 WAIT_TICKS: int = 5
 
-# 防碰撞惩罚值
-PENALTY_R0: float = 200.0    # 导航机器人自己的 Cell（来自其他机器人）
+# 防碰撞惩值
+PENALTY_R0: float = 80.0     # 导航机器人自己的 Cell（一次性，不按其他机器人数量叠加）
 PENALTY_R1: float = 40.0     # 第 1 圈
 PENALTY_R2: float = 0     # 第 2 圈
 
@@ -315,12 +315,12 @@ class Simulator:
 
         nav_cell = self.grid[exclude_robot.row, exclude_robot.col]
 
+        # (c) 在导航机器人自己的 Cell 上注入一次惩罚（不随其他机器人数量累加）
+        _inject(nav_cell, PENALTY_R0)
+
         for robot in self.robots:
             if robot is exclude_robot:
                 continue
-
-            # (c) 在导航机器人自己的 Cell 上注入惩罚（来自该其他机器人）
-            _inject(nav_cell, PENALTY_R0)
 
             # (b) Ring 1 和 Ring 2 —— 仅活跃导航中的机器人才有扩展圈
             #     IDLE/FINISH 机器人只有 ring 0（靠 occ 挡住自己格子即可）
