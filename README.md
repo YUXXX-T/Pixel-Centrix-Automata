@@ -5,12 +5,56 @@
 ## 系统架构
 
 ```
-main.py          入口 & 可视化（matplotlib 实时热力图）
-├── simulator.py   仿真调度核心（tick 循环、状态机、防碰撞）
-│   ├── injector.py  梯度注入器（场的创建、扩散、清理）
-│   ├── robot.py     机器人 Agent（导航决策、移动执行）
-│   └── grid.py      地图（Cell 二维数组、扩散算法）
-│       └── cell.py    格子 Agent（6 维梯度 + wake 尾迹）
+main.py            入口 & 可视化（单轮仿真，matplotlib 实时热力图）
+benchmark.py       吞吐量基准测试（连续循环仿真，有限 tick）
+├── simulator.py     仿真调度核心（tick 循环、状态机、防碰撞）
+│   ├── injector.py    梯度注入器（场的创建、扩散、清理）
+│   ├── robot.py       机器人 Agent（导航决策、移动执行）
+│   └── grid.py        地图（Cell 二维数组、扩散算法）
+│       └── cell.py      格子 Agent（6 维梯度 + wake 尾迹）
+```
+
+## 运行模式
+
+### 单轮仿真 (`main.py`)
+
+每个机器人完成一次 Pod 拾取→配送→归还流程后进入 `FINISH` 终态，仿真在所有任务完成后停止。
+
+```bash
+python main.py
+```
+
+| 参数 | 说明 |
+|------|------|
+| `N_AGENTS` | 切换配置：`10` / `20` / `42` 机器人+Pod |
+| `VISUALIZE` | `True` 开启可视化，`False` 纯终端 |
+
+### 吞吐量基准 (`benchmark.py`)
+
+42 Pod / 30 Robot / 4 工作站，在User指定的有限 tick 内**连续循环**运行，测量稳态吞吐量。
+
+```bash
+python benchmark.py 500       # 运行 500 tick
+python benchmark.py            # 默认 500 tick
+```
+
+**与单轮仿真的区别**：
+
+| 行为 | main.py | benchmark.py |
+|------|---------|--------------|
+| 机器人归还 Pod 后 | 进入 `FINISH` 终态 | 回到 `IDLE`，继续接单 |
+| Pod 被放回后 | 保持不动 | 2 tick 冷却后重新注入新订单 |
+| Pod 放下瞬间 | 无特殊处理 | Grad[1-5] 注入 `COST_INF` 屏障（1 tick）|
+| 仿真停止条件 | 所有订单完成 | 到达用户设定的 tick 上限 |
+
+输出示例：
+```
+======================================================================
+  RESULTS
+    Ticks        : 500
+    Deliveries   : 133
+    Throughput   : 0.2660 deliveries/tick
+======================================================================
 ```
 
 ## 梯度维度
@@ -23,12 +67,16 @@ main.py          入口 & 可视化（matplotlib 实时热力图）
 
 ## 机器人状态机
 
+**单轮模式** (`main.py`)：
 ```
 IDLE → FETCH_POD → DELIVER → WAIT_AT_STATION → RETURN_POD → FINISH
- │         │           │            │                │          │
- │    爬升Grad[0]  下降Grad[K]   等待N tick      下降Grad[5]   终态
- │    拾取任意Pod  送往工作站    工作站处理      归还至任意空槽  不再派发
- └─────────────────────────────────────────────────────────────┘
+       爬升Grad[0]  下降Grad[K]   等待N tick      下降Grad[5]   终态
+```
+
+**连续模式** (`benchmark.py`)：
+```
+IDLE → FETCH_POD → DELIVER → WAIT_AT_STATION → RETURN_POD → IDLE（循环）
+       爬升Grad[0]  下降Grad[K]   等待N tick      下降Grad[5]   ↑ 回到起点
 ```
 
 **自由选择机制**：
@@ -51,7 +99,6 @@ IDLE → FETCH_POD → DELIVER → WAIT_AT_STATION → RETURN_POD → FINISH
 | Ring 0 | 机器人所在格 | `PENALTY_R0` | 对所有导航中的其他机器人注入 |
 | Ring 1 | 曼哈顿距离=1 | `PENALTY_R1` | 仅活跃导航机器人 |
 | Ring 2 | 曼哈顿距离=2 | `PENALTY_R2` | 仅活跃导航机器人 |
-| Pod 阻碍 | 未拾取 Pod 格 | `PENALTY_R0` | 仅对 DELIVER 机器人生效 |
 
 惩罚方向与导航方向一致：吸引场注入低值（凹坑），代价场注入高值（凸峰）。
 
@@ -68,51 +115,50 @@ IDLE → FETCH_POD → DELIVER → WAIT_AT_STATION → RETURN_POD → FINISH
 ```
 free_slots = _all_pod_positions - _occupied_pod_slots
 ```
-消除事件驱动管理中的竞态（同一 tick 内 FETCH 拾起释放新槽 / RETURN 放下占据槽）。
 
 ## 可视化
 
-4 面板实时热力图：
+4 面板实时热力图（`main.py` 和 `benchmark.py` 均支持）：
 
 | 面板 | 内容 | 色图 |
 |------|------|------|
-| 左上 | Grad[0] Pod 吸引场 | `RdYlGn` |
-| 右上 | Grad[1] Station#1 代价场 | `YlGnBu` |
-| 左下 | Grad[5] 返程代价场 | `YlGnBu` |
+| 左上 | Grad[0] Pod 吸引场 | `YlOrRd` |
+| 右上 | Grad[1] Station#1 代价场 | `plasma_r` |
+| 左下 | Grad[5] 返程代价场 | `Blues_r` |
 | 右下 | Wake 尾迹热力图 | `hot` |
 
 标记说明：
 - ●（圆点）= 机器人，颜色区分 ID
 - ▲（三角）= Pod，颜色区分 ID，搬运时跟随机器人
 - ★（红星）= 工作站
-- 灰色方块 = 被占据/预约的格子
+
+`benchmark.py` 状态栏额外显示：当前 tick、已完成配送数、实时吞吐量。
 
 ## 配置参数
 
 | 参数 | 默认值 | 位置 | 说明 |
 |------|--------|------|------|
-| `ROWS, COLS` | 10, 10 | main.py | 地图大小 |
-| `MAX_TICKS` | 500 | main.py | 最大仿真步数 |
-| `TICK_INTERVAL` | 0.12s | main.py | 可视化帧间隔 |
+| `ROWS, COLS` | 10, 10 | main.py / benchmark.py | 地图大小 |
+| `MAX_TICKS` | 500 | main.py / benchmark.py | 最大仿真步数 |
+| `TICK_INTERVAL` | 0.12s | main.py / benchmark.py | 可视化帧间隔 |
 | `WAIT_TICKS` | 5 | simulator.py | 工作站等待时间 |
 | `MAX_GRAD` | 1000 | injector.py | 吸引场峰值 |
 | `ALPHA` | 0.90 | injector.py | 吸引场扩散惯性 |
 | `DELTA_DECAY` | 10 | injector.py | 吸引场空间衰减 |
-| `WAKE_INIT` | 5.0 | simulator.py | wake 初始值 |
-| `WAKE_DELTA` | 1.0 | simulator.py | wake 衰减速率 |
-| `W2` | 25.0 | simulator.py | wake 评分权重 |
+| `WAKE_INIT` | 200.0 | simulator.py | wake 初始值 |
+| `WAKE_N` | 2 | simulator.py | wake 衰减步数 |
+| `W2` | 0.5 | simulator.py | wake 评分权重 |
+| `POD_COOLDOWN_TICKS` | 2 | benchmark.py | Pod 冷却 tick 数 |
 
 ## 快速开始
 
 ```bash
-# 激活环境
-conda activate "XXX"
-
-# 运行仿真（含可视化）
+# 单轮仿真（含可视化）
 python main.py
-```
 
-当前配置：10 台机器人、10 个 Pod、4 个工作站，约 67 tick 完成所有任务。
+# 吞吐量基准测试（500 tick）
+python benchmark.py 500
+```
 
 ## 依赖
 
@@ -124,7 +170,6 @@ python main.py
 ![DEMO](./demo1.png)
 ![DEMO](./demo2.png)
 ![DEMO](./demo3.png)
-
 
 ## DEMO with 84% Nodes
 ![DEMO](./demo4.png)
