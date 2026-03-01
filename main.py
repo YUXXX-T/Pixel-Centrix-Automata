@@ -250,12 +250,13 @@ def run_visual() -> None:
     # Pod 标记（左面板，跟随机器人）
     pod_dots = []
     for idx, (pr, pc, _) in enumerate(ORDERS):
+        lbl = f"P{idx}" if N_AGENTS <= 20 else ("Pods" if idx == 0 else None)
         d, = axes[0].plot(pc, gy(pr), "^", markersize=11, zorder=9,
                           color=POD_COLORS[idx % len(POD_COLORS)], markeredgecolor="white",
-                          markeredgewidth=0.8, label=f"P{idx}")
+                          markeredgewidth=0.8, label=lbl)
         pod_dots.append((d, pr, pc))
     axes[0].legend(loc="upper left", fontsize=6, facecolor="#1a1a3a",
-                   edgecolor="#334466", labelcolor="white")
+                   edgecolor="#334466", labelcolor="white", ncol=2)
 
     # Robot 标记（所有面板）
     robot_dots = []
@@ -263,9 +264,13 @@ def run_visual() -> None:
         dots = []
         for rid in range(len(ROBOT_STARTS)):
             color = ROBOT_COLORS[rid % len(ROBOT_COLORS)]
+            if ax is axes[0]:
+                lbl = f"R{rid}" if N_AGENTS <= 20 else ("Robots" if rid == 0 else None)
+            else:
+                lbl = None
             d, = ax.plot([], [], "o", markersize=12, zorder=8,
                          color=color, markeredgecolor="white", markeredgewidth=1.1,
-                         label=f"R{rid}" if ax is axes[0] else None)
+                         label=lbl)
             dots.append(d)
         robot_dots.append(dots)
 
