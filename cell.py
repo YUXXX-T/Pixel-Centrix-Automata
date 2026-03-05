@@ -1,10 +1,10 @@
 """
 cell.py — Cell Agent (thin view into Grid's centralized arrays)
 
-Grad 维度布局（共 6 维）：
+Grad 维度布局（共 10 维）：
   Grad[0]   : Pod 吸引场（高梯度=货架，机器人爬升）
-  Grad[1..4]: 工作站代价场（低值=工作站，机器人下降）
-  Grad[5]   : 返程代价场（低值=pod原始位置，机器人下降）
+  Grad[1..8]: 工作站代价场（低值=工作站，机器人下降）— 最多 8 站
+  Grad[9]   : 返程代价场（低值=pod原始位置，机器人下降）
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import numpy as np
 
-N_DIM: int = 6   # Grad[0..5]
+N_DIM: int = 10   # Grad[0..9]
 
 
 class Cell:

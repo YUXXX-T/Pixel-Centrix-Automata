@@ -6,8 +6,8 @@ TaskType 状态机：
 
 Grad 维度（全局共享，与 cell.py 对应）：
   POD_DIM    = 0  : Pod 吸引场（爬升 = 前进方向）
-  RETURN_DIM = 5  : 返程代价场（下降 = 前进方向）
-  tar_id     : 工作站代价场维度（下降 = 前进方向）
+  RETURN_DIM = 9  : 返程代价场（下降 = 前进方向）
+  tar_id     : 工作站代价场维度（下降 = 前进方向, 1..8）
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from grid import Grid
 
 POD_DIM: int    = 0   # Grad[0]: 吸引场，共用
-RETURN_DIM: int = 5   # Grad[5]: 返程场，共用
+RETURN_DIM: int = 9   # Grad[9]: 返程场，共用
 
 
 class TaskType(Enum):

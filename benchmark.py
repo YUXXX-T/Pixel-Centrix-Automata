@@ -1,7 +1,10 @@
 """
 benchmark.py — Finite-Tick Throughput Benchmark
 
-42 pods / 30 robots / 4 stations on a 10×10 grid.
+Dual map support:
+  MAP_SIZE = 10  → hardcoded 42 pods / 30 robots / 4 stations on 10×10
+  MAP_SIZE = 20  → loads map_config_20x20.json: 150 pods / 200 robots / 6 stations on 20×20
+
 Robots cycle continuously: IDLE→FETCH_POD→DELIVER→WAIT→RETURN_POD→(IDLE again).
 Pods re-inject with a new order after a 2-tick cooldown.
 Dropped pods get COST_INF barrier in Grad[1-5] for 1 tick.
@@ -12,8 +15,11 @@ Usage:
 
 from __future__ import annotations
 import sys
+import os
+import json
 import random
 import time
+import colorsys
 from simulator import Simulator, Order, WAIT_TICKS, WAKE_INIT
 import simulator as _sim_module
 from robot import Robot, TaskType, POD_DIM, RETURN_DIM
@@ -21,59 +27,116 @@ from grid import COST_INF
 from injector import MAX_GRAD
 
 # 终端输出开关：False 时只输出最终 RESULTS
-PRINT_SCREEN = True
+PRINT_SCREEN = False
 _sim_module.PRINT_SCREEN = PRINT_SCREEN   # 同步到 simulator 模块
 VISUALIZE    = False
-# ── Grid ──────────────────────────────────────────────────────────────
-ROWS, COLS = 10, 10
 
-# ── Stations (same as main.py) ────────────────────────────────────────
-STATIONS = {
+# ══════════════════════════════════════════════════════════════════════
+# MAP_SIZE switch:  10 → hardcoded 10×10 ;  20 → load JSON config
+# ══════════════════════════════════════════════════════════════════════
+MAP_SIZE = 20
+
+# ---------- colour generation helper ----------------------------------
+def _generate_colors(n: int, saturation: float = 0.75,
+                     value: float = 0.95) -> list[str]:
+    """Generate *n* visually distinct hex colours via HSV cycling."""
+    colors = []
+    for i in range(n):
+        h = i / n
+        r, g, b = colorsys.hsv_to_rgb(h, saturation, value)
+        colors.append(f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}")
+    return colors
+
+# ---------- JSON config loader ----------------------------------------
+def _load_json_config(path: str):
+    """Return (rows, cols, stations_dict, orders_cfg, robot_starts,
+    num_robots) from a JSON map config file."""
+    with open(path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    size = cfg["map_size"]
+    rows = cols = size
+    num_robots = cfg.get("num_robots", 200)
+
+    # stations  {tar_id: (row, col)}
+    stations = {s["tar_id"]: (s["row"], s["col"]) for s in cfg["stations"]}
+
+    # expand pod blocks → orders list  (row, col, tar_id)
+    station_ids = list(stations.keys())
+    orders: list[tuple[int, int, int]] = []
+    idx = 0
+    for blk in cfg["pod_blocks"]:
+        or_, oc = blk["origin_row"], blk["origin_col"]
+        for dr in range(blk["num_rows"]):
+            for dc in range(blk["num_cols"]):
+                tar = station_ids[idx % len(station_ids)]
+                orders.append((or_ + dr, oc + dc, tar))
+                idx += 1
+
+    # build occupied set (pods + stations) for robot placement
+    occupied: set[tuple[int, int]] = set()
+    for pr, pc, _ in orders:
+        occupied.add((pr, pc))
+    for sr, sc in stations.values():
+        occupied.add((sr, sc))
+
+    # auto-place robots on free cells, row-by-row
+    robot_starts: list[tuple[int, int]] = []
+    for r in range(rows):
+        for c in range(cols):
+            if (r, c) not in occupied:
+                robot_starts.append((r, c))
+            if len(robot_starts) >= num_robots:
+                break
+        if len(robot_starts) >= num_robots:
+            break
+
+    return rows, cols, stations, orders, robot_starts, num_robots
+
+
+# ── 10×10 hardcoded config  (original) ────────────────────────────────
+_STATIONS_10 = {
     1: (1, 9),
     2: (1, 0),
     3: (8, 0),
     4: (8, 9),
 }
-
-# ── 30 robots: first 30 from the 42-robot layout ─────────────────────
-ROBOT_STARTS_42 = [
-    # Row 0 (10)
+_ROBOT_STARTS_42 = [
     (0, 0), (0, 1), (0, 2), (0, 3), (0, 4),
     (0, 5), (0, 6), (0, 7), (0, 8), (0, 9),
-    # Row 5 (10)
     (5, 0), (5, 1), (5, 2), (5, 3), (5, 4),
     (5, 5), (5, 6), (5, 7), (5, 8), (5, 9),
-    # Row 9 (10)
     (9, 0), (9, 1), (9, 2), (9, 3), (9, 4),
     (9, 5), (9, 6), (9, 7), (9, 8), (9, 9),
-    # Col 3 (6)
     (1, 3), (2, 3), (3, 3), (4, 3), (6, 3), (7, 3),
-    # Col 6 (6)
     (1, 6), (2, 6), (3, 6), (4, 6), (6, 6), (7, 6),
 ]
-ROBOT_STARTS = ROBOT_STARTS_42[:30]
-
-# ── 42 pods (same as main.py N_AGENTS==42) ────────────────────────────
-ORDERS_CFG = [
-    # Block 1: rows 1-4, cols 1-2
+_ROBOT_STARTS_10 = _ROBOT_STARTS_42[:30]
+_ORDERS_CFG_10 = [
     (1,1,1),(1,2,2),(2,1,3),(2,2,4),
     (3,1,1),(3,2,2),(4,1,3),(4,2,4),
-    # Block 2: rows 6-8, cols 1-2
     (6,1,1),(6,2,2),(7,1,3),(7,2,4),
     (8,1,1),(8,2,2),
-    # Block 3: rows 1-4, cols 4-5
     (1,4,3),(1,5,4),(2,4,1),(2,5,2),
     (3,4,3),(3,5,4),(4,4,1),(4,5,2),
-    # Block 4: rows 6-8, cols 4-5
     (6,4,3),(6,5,4),(7,4,1),(7,5,2),
     (8,4,3),(8,5,4),
-    # Block 5: rows 1-4, cols 7-8
     (1,7,1),(1,8,2),(2,7,3),(2,8,4),
     (3,7,1),(3,8,2),(4,7,3),(4,8,4),
-    # Block 6: rows 6-8, cols 7-8
     (6,7,1),(6,8,2),(7,7,3),(7,8,4),
     (8,7,1),(8,8,2),
 ]
+
+# ── Resolve active config based on MAP_SIZE ───────────────────────────
+if MAP_SIZE == 10:
+    ROWS, COLS = 10, 10
+    STATIONS     = _STATIONS_10
+    ORDERS_CFG   = _ORDERS_CFG_10
+    ROBOT_STARTS = _ROBOT_STARTS_10
+else:
+    _json_path = os.path.join(os.path.dirname(__file__),
+                              f"map_config_{MAP_SIZE}x{MAP_SIZE}.json")
+    ROWS, COLS, STATIONS, ORDERS_CFG, ROBOT_STARTS, _num_robots = \
+        _load_json_config(_json_path)
 
 # All valid station IDs for random re-assignment
 STATION_IDS = list(STATIONS.keys())
@@ -81,27 +144,12 @@ STATION_IDS = list(STATIONS.keys())
 # Re-injection cooldown (ticks after pod is dropped back)
 POD_COOLDOWN_TICKS = 2
 
-
 MAX_TICKS     = 500
 TICK_INTERVAL = 0.12
 
-ROBOT_COLORS = [
-    "#00ff88", "#ff6644", "#44aaff", "#ffcc00", "#cc44ff",
-    "#ff4488", "#44ffdd", "#ff8800", "#aaffaa", "#8888ff",
-    "#ff3333", "#33ff99", "#3399ff", "#ffff33", "#ff33cc",
-    "#33ffff", "#cc9933", "#9933cc", "#33cc66", "#6633ff",
-]
-POD_COLORS = [
-    "#88ddff", "#ffcc44", "#cc88ff", "#88ff88", "#ff88cc",
-    "#ffaa44", "#44ccff", "#ff6688", "#aaff44", "#cc88ff",
-    "#44ffaa", "#ff4444", "#4488ff", "#ddff44", "#ff44aa",
-    "#44dddd", "#ddaa44", "#aa44dd", "#44dd88", "#8844ff",
-    "#ff8888", "#88ffcc", "#8888dd", "#ddcc88", "#cc44aa",
-    "#44aaaa", "#aacc44", "#dd44ff", "#44ff44", "#ff44ff",
-    "#aaddff", "#ffaa88", "#88aacc", "#ccffaa", "#ff88aa",
-    "#88ccaa", "#ccaa88", "#aa88cc", "#88ccff", "#ffcc88",
-    "#ccff88", "#88ffaa",
-]
+# ── Colours (auto-sized to match robot / pod count) ───────────────────
+ROBOT_COLORS = _generate_colors(max(len(ROBOT_STARTS), 20), 0.80, 0.95)
+POD_COLORS   = _generate_colors(max(len(ORDERS_CFG),   42), 0.70, 0.92)
 
 
 # ======================================================================
@@ -222,7 +270,7 @@ class BenchmarkSimulator(Simulator):
         """Inject COST_INF into Grad[1-5] at the dropped pod's cell."""
         r, c = pos
         cell = self.grid[r, c]
-        for dim in range(1, 6):  # Grad[1] through Grad[5]
+        for dim in range(1, RETURN_DIM + 1):  # Grad[1] through Grad[RETURN_DIM]
             key = (r, c, dim)
             if key not in self._barrier_saved:
                 self._barrier_saved[key] = cell.grad[dim]
@@ -233,7 +281,7 @@ class BenchmarkSimulator(Simulator):
         """Remove COST_INF barriers from the previous tick."""
         for r, c in self._barrier_cells:
             cell = self.grid[r, c]
-            for dim in range(1, 6):
+            for dim in range(1, RETURN_DIM + 1):
                 key = (r, c, dim)
                 if key in self._barrier_saved:
                     cell.grad[dim] = self._barrier_saved[key]
@@ -307,7 +355,8 @@ def build_sim() -> BenchmarkSimulator:
 def run_console(ticks: int) -> None:
     sim = build_sim()
     print("=" * 70)
-    print(f"  Benchmark: 42 pods / 30 robots / 4 stations / {ticks} ticks")
+    print(f"  Benchmark: {len(ORDERS_CFG)} pods / {len(ROBOT_STARTS)} robots / "
+          f"{len(STATIONS)} stations / {MAP_SIZE}×{MAP_SIZE} / {ticks} ticks")
     print("=" * 70)
 
     t0 = time.perf_counter()
@@ -343,14 +392,16 @@ def run_visual(ticks: int) -> None:
     def gy(r: int) -> int:
         return ROWS - 1 - r
 
-    fig, axes_2d = plt.subplots(2, 2, figsize=(14, 12))
+    _fig_w = 14 if MAP_SIZE <= 10 else 20
+    _fig_h = 12 if MAP_SIZE <= 10 else 18
+    fig, axes_2d = plt.subplots(2, 2, figsize=(_fig_w, _fig_h))
     axes = axes_2d.flatten()
     fig.patch.set_facecolor("#1a1a2e")
 
     PANELS = [
         (POD_DIM,    "Grad[0] Pod Attraction",  "YlOrRd",   False),
         (1,          "Grad[1] Station#1 Cost",   "plasma_r", True),
-        (RETURN_DIM, "Grad[5] Return-to-Origin", "Blues_r",   True),
+        (RETURN_DIM, f"Grad[{RETURN_DIM}] Return-to-Origin", "Blues_r",   True),
     ]
 
     def setup_ax(ax, title):
@@ -367,10 +418,11 @@ def run_visual(ticks: int) -> None:
         for y in np.arange(-0.5, ROWS, 1):
             ax.axhline(y, color="#334466", lw=0.5, zorder=1)
         ax.set_xticks(range(COLS))
-        ax.set_xticklabels(range(COLS), color="#aaaacc", fontsize=6)
+        _tick_fs = 6 if MAP_SIZE <= 10 else 4
+        ax.set_xticklabels(range(COLS), color="#aaaacc", fontsize=_tick_fs)
         ax.set_yticks(range(ROWS))
         ax.set_yticklabels([ROWS - 1 - i for i in range(ROWS)],
-                           color="#aaaacc", fontsize=6)
+                           color="#aaaacc", fontsize=_tick_fs)
 
     im_list = []
     for idx, (ax, (dim, title, cmap, is_cost)) in enumerate(zip(axes, PANELS)):
@@ -401,16 +453,18 @@ def run_visual(ticks: int) -> None:
         extent=[-0.5, COLS-0.5, -0.5, ROWS-0.5],
         aspect="equal", alpha=0.85, zorder=2)
     fig.colorbar(wake_im, ax=ax_wake, fraction=0.03, pad=0.02)
+    _star_ms = 13 if MAP_SIZE <= 10 else 8
+    _star_fs = 6  if MAP_SIZE <= 10 else 4
     for tid, (sr, sc) in STATIONS.items():
-        ax_wake.plot(sc, gy(sr), "r*", markersize=13, zorder=6,
+        ax_wake.plot(sc, gy(sr), "r*", markersize=_star_ms, zorder=6,
                      markeredgecolor="white", markeredgewidth=0.4)
 
     # Station markers on all gradient panels
     for ax in axes[:3]:
         for tid, (sr, sc) in STATIONS.items():
-            ax.plot(sc, gy(sr), "r*", markersize=13, zorder=6,
+            ax.plot(sc, gy(sr), "r*", markersize=_star_ms, zorder=6,
                     markeredgecolor="white", markeredgewidth=0.4)
-            ax.text(sc, gy(sr)+0.35, str(tid), color="white", fontsize=6,
+            ax.text(sc, gy(sr)+0.35, str(tid), color="white", fontsize=_star_fs,
                     ha="center", va="bottom", zorder=7)
 
     # Debug: star marker at Cell(8,8)
@@ -421,16 +475,18 @@ def run_visual(ticks: int) -> None:
     #             ha="center", va="bottom", zorder=10)
 
     # Occ/Res scatter (panel 1)
-    occ_scat = axes[1].scatter([], [], s=200, marker="s",
+    _scat_s = 200 if MAP_SIZE <= 10 else 50
+    occ_scat = axes[1].scatter([], [], s=_scat_s, marker="s",
                                color="#ff9900", alpha=0.5, zorder=3, label="Occ")
-    res_scat = axes[1].scatter([], [], s=200, marker="s",
+    res_scat = axes[1].scatter([], [], s=_scat_s, marker="s",
                                color="#cc44ff", alpha=0.4, zorder=3, label="Res")
     axes[1].legend(loc="upper left", fontsize=6, facecolor="#1a1a3a",
                    edgecolor="#334466", labelcolor="white")
 
     # Pod scatter (panel 0) — per-pod colors, updated each frame
-    pod_scat = axes[0].scatter([], [], s=100, marker="^", zorder=9,
-                               edgecolors="white", linewidths=0.8,
+    _pod_s = 100 if MAP_SIZE <= 10 else 30
+    pod_scat = axes[0].scatter([], [], s=_pod_s, marker="^", zorder=9,
+                               edgecolors="white", linewidths=0.5,
                                label="Pods")
 
     # Robot markers (all panels)
@@ -446,9 +502,10 @@ def run_visual(ticks: int) -> None:
             #              markeredgewidth=1.1,
             #              label=f"R{rid}" if ax is axes[0] else None)
 
-            d, = ax.plot([], [], "o", markersize=12, zorder=8,
+            _r_ms = 12 if MAP_SIZE <= 10 else 5
+            d, = ax.plot([], [], "o", markersize=_r_ms, zorder=8,
                          color=color, markeredgecolor="white",
-                         markeredgewidth=1.1,
+                         markeredgewidth=0.5,
                          label=f"R{rid}" if ax is axes[0] else None)
             dots.append(d)
         robot_dots.append(dots)

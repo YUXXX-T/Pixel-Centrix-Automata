@@ -3,12 +3,12 @@ injector.py — GradientInjector (batch-optimized)
 
 维度（与 cell.py 一致）：
   Grad[0]   : Pod 吸引场（多 pod 峰共用，高梯度=目标）
-  Grad[1..4]: 工作站代价场（永久静态场，低值=工作站）
-  Grad[5]   : 返程代价场（多返程目标共用，低值=pod原始位置）
+  Grad[1..8]: 工作站代价场（永久静态场，低值=工作站）— 最多 8 站
+  Grad[9]   : 返程代价场（多返程目标共用，低值=pod原始位置）
 
 Performance keys:
   - Multi-source batch diffusion: pin ALL sources per iteration in one call
-  - Reduced cost iterations: 300 → rows+cols (wavefront covers 10×10 in ~18 steps)
+  - Reduced cost iterations: 300 → rows+cols (wavefront covers grid in ~rows+cols steps)
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from grid import Grid
 
 POD_DIM:    int = 0
-RETURN_DIM: int = 5
+RETURN_DIM: int = 9
 
 # ── 吸引场参数 ────────────────────────────────────────────────────────
 MAX_GRAD: float         = 1000.0
