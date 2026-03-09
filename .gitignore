@@ -5,3 +5,10 @@ comparision.csv
 data/10x10_process/*.png
 data/visualize_imgs.py
 data/throughput_scalability_analysis.png
+data/subs/*
+data/subs2/*
+data/idk.py
+data/idk2.py
+data/image2_.py
+data/image2_new.py
+pcda_field_superposition_updated.png
