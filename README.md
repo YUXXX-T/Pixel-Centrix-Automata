@@ -176,3 +176,18 @@ python benchmark.py 500
 ![DEMO](./demo5.png)
 ![DEMO](./demo6.png)
 ![DEMO](./demo7.png)
+
+
+
+## Citation
+
+If you find this simulation environment or the PCDA architecture helpful for your research, please consider citing our IEEE CASE 2026 paper:
+
+```bibtex
+@inproceedings{Pixel-Centrix-Distributed-Automata,
+  title={Your Paper Title Here},
+  author={Tian, Yuxuan and Zhaokai, Liu and Lin Wang},
+  booktitle={2026 IEEE 22nd International Conference on Automation Science and Engineering (CASE)},
+  year={2026},
+  organization={IEEE}
+}
